@@ -16,4 +16,7 @@ public class TripDto
 public class CountryDto
 {
     public string Name { get; set; }
+    public int RegisteredAt { get; set; }
+    public int? PaymentDate { get; set; }
+
 }
