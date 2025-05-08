@@ -114,4 +114,115 @@ public class DbService : IDbService
         return trips;
     }
 
+    public async Task<int> AddClientAsync(CreateClientDto clientDto)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        
+        var query = @"
+        INSERT INTO Client (FirstName, LastName, Email, Telephone, Pesel)
+        OUTPUT INSERTED.IdClient
+        VALUES (@FirstName, @LastName, @Email, @Telephone, @Pesel)";
+        
+        await using var command = new SqlCommand(query, connection);
+        command.Parameters.AddWithValue("@FirstName", clientDto.FirstName);
+        command.Parameters.AddWithValue("@LastName", clientDto.LastName);
+        command.Parameters.AddWithValue("@Email", clientDto.Email);
+        command.Parameters.AddWithValue("@Telephone", (object?)clientDto.Telephone ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Pesel", clientDto.Pesel);
+
+        var insertedId = (int)await command.ExecuteScalarAsync();
+        return insertedId;
+
+    }
+
+    public async Task<string?> RegisterClientToTripAsync(int clientId, int tripId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        
+        await using var transaction = await connection.BeginTransactionAsync();
+        try
+    {
+        //sprawdzenie czy klient isttnieje
+        var checkClient = new SqlCommand("SELECT 1 FROM Client WHERE IdClient = @id", connection, (SqlTransaction)transaction);
+        checkClient.Parameters.AddWithValue("@id", clientId);
+        var clientExists = await checkClient.ExecuteScalarAsync();
+        if (clientExists == null)
+            return "Klient nie istnieje";
+
+        //sprawdzenie czy wycieczka istnieje
+        var checkTrip = new SqlCommand("SELECT MaxPeople FROM Trip WHERE IdTrip = @id", connection, (SqlTransaction)transaction);
+        checkTrip.Parameters.AddWithValue("@id", tripId);
+        var maxPeopleObj = await checkTrip.ExecuteScalarAsync();
+        if (maxPeopleObj == null)
+            return "Wycieczka nie istnieje";
+
+        var maxPeople = (int)maxPeopleObj;
+
+        //liczba aktualnych zapisów
+        var countCmd = new SqlCommand("SELECT COUNT(*) FROM Client_Trip WHERE IdTrip = @tripId", connection, (SqlTransaction)transaction);
+        countCmd.Parameters.AddWithValue("@tripId", tripId);
+        var count = (int)await countCmd.ExecuteScalarAsync();
+
+        if (count >= maxPeople)
+            return "Osiągnięto maksymalną liczbę uczestników";
+
+        //srawdzenie czy już zapisany
+        var existsCmd = new SqlCommand("SELECT 1 FROM Client_Trip WHERE IdClient = @cid AND IdTrip = @tid", connection, (SqlTransaction)transaction);
+        existsCmd.Parameters.AddWithValue("@cid", clientId);
+        existsCmd.Parameters.AddWithValue("@tid", tripId);
+        var already = await existsCmd.ExecuteScalarAsync();
+        if (already != null)
+            return "Klient już zapisany na tę wycieczkę";
+
+        //wstawienie nowgo rekordu
+        var insertCmd = new SqlCommand(@"
+            INSERT INTO Client_Trip (IdClient, IdTrip, RegisteredAt, PaymentDate)
+            VALUES (@cid, @tid, @date, NULL)", connection, (SqlTransaction)transaction);
+
+        insertCmd.Parameters.AddWithValue("@cid", clientId);
+        insertCmd.Parameters.AddWithValue("@tid", tripId);
+        insertCmd.Parameters.AddWithValue("@date", int.Parse(DateTime.Now.ToString("yyyyMMdd"))); // np. 20250508
+
+        await insertCmd.ExecuteNonQueryAsync();
+
+        await transaction.CommitAsync();
+        return null; 
+    }
+    catch
+    {
+        await transaction.RollbackAsync();
+        throw;
+    }
+
+    }
+
+    public async Task<string?> DeleteClientTripAsync(int clientId, int tripId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        
+        var checkQuery =  @"SELECT 1 FROM Client_Trip WHERE IdClient = @cid AND IdTrip = @tid";
+        var checkCmd = new SqlCommand(checkQuery, connection);
+        checkCmd.Parameters.AddWithValue("@cid", clientId);
+        checkCmd.Parameters.AddWithValue("@tid", tripId);
+        
+        var exists = await checkCmd.ExecuteScalarAsync();
+        if (exists == null)
+            return "Rejestracja nie istnieje";
+        
+        var deleteCmd = new SqlCommand("DELETE FROM Client_Trip WHERE IdClient = @cid AND IdTrip = @tid", connection);
+        deleteCmd.Parameters.AddWithValue("@cid", clientId);
+        deleteCmd.Parameters.AddWithValue("@tid", tripId);
+        
+        await deleteCmd.ExecuteNonQueryAsync();
+        return null;
+    }
+
+
 }

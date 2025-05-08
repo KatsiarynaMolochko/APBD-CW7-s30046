@@ -14,6 +14,8 @@ public class TripsController : ControllerBase
         _dbService = dbService;
     }
 
+    // zwraca wszystkie dostępne wycieczki wraz z przypisanymi krajami.
+    // każda wycieczka zawiera dane z tabeli Trip oraz listę krajów z country.
     [HttpGet]
     public async Task<IActionResult> GetTrips()
     {
